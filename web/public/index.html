@@ -1,0 +1,542 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OmniVet - Veterinary Command Center</title>
+  
+  <!-- Tailwind CSS via CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            brand: {
+              dark: '#070b14',
+              card: '#0f172a',
+              border: '#1e293b',
+              primary: '#06b6d4',
+              accent: '#10b981',
+              danger: '#ef4444'
+            }
+          }
+        }
+      }
+    }
+  </script>
+
+  <!-- Leaflet CSS & JS via CDN -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+  <style>
+    body {
+      background-color: #070b14;
+      color: #f1f5f9;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    }
+    
+    .pulse-red-marker {
+      position: relative;
+      width: 22px;
+      height: 22px;
+      border-radius: 50%;
+      background: #ef4444;
+      border: 3px solid #ffffff;
+      box-shadow: 0 0 14px rgba(239, 68, 68, 0.9);
+    }
+
+    .pulse-red-marker::after {
+      content: '';
+      position: absolute;
+      top: -6px;
+      left: -6px;
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      border: 2px solid #ef4444;
+      animation: pulse-ring 1.8s cubic-bezier(0.215, 0.61, 0.355, 1) infinite;
+    }
+
+    @keyframes pulse-ring {
+      0% { transform: scale(0.6); opacity: 0.9; }
+      80%, 100% { transform: scale(2.2); opacity: 0; }
+    }
+
+    .leaflet-popup-content-wrapper {
+      background: #0f172a !important;
+      color: #f8fafc !important;
+      border: 1px solid #334155;
+      border-radius: 10px !important;
+      box-shadow: 0 10px 25px rgba(0,0,0,0.6) !important;
+    }
+    .leaflet-popup-tip {
+      background: #0f172a !important;
+    }
+  </style>
+</head>
+<body class="min-h-screen flex flex-col bg-[#070b14]">
+
+  <!-- TOP NAVIGATION BAR -->
+  <header class="sticky top-0 z-40 bg-slate-950/80 backdrop-blur-md border-b border-slate-800/80">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+      <div class="flex items-center space-x-3">
+        <div class="w-9 h-9 rounded-xl bg-gradient-to-tr from-cyan-600 to-teal-400 flex items-center justify-center shadow-lg shadow-cyan-950 font-bold text-slate-950">
+          🐾
+        </div>
+        <div>
+          <div class="flex items-center gap-2">
+            <span class="font-extrabold text-sm tracking-wider text-slate-100 uppercase">OMNIVET</span>
+            <span class="px-2 py-0.5 text-[10px] font-bold rounded-full bg-cyan-500/10 text-cyan-400 border border-cyan-500/30">Vet Command Portal</span>
+          </div>
+          <p class="text-[11px] text-slate-400 font-medium">Official Animal Health Surveillance & Quarantine Directorate</p>
+        </div>
+      </div>
+
+      <!-- Vet User Profile & Logout -->
+      <div id="nav-user-section" class="hidden items-center gap-3">
+        <div class="text-right">
+          <div id="nav-vet-name" class="text-xs font-bold text-slate-200">Dr. User</div>
+          <div id="nav-vet-id" class="text-[10px] text-cyan-400 font-mono">ID: VET-HQ</div>
+        </div>
+        <button onclick="handleVetLogout()" class="px-3 py-1.5 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/30 rounded-lg text-xs font-bold transition-all">
+          Sign Out
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- MAIN CONTAINER -->
+  <main class="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 lg:p-8 space-y-6">
+
+    <!-- VET DOCTOR LOGIN / REGISTRATION SCREEN -->
+    <div id="auth-view" class="max-w-md mx-auto mt-10 space-y-6">
+      <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6 sm:p-8 shadow-2xl space-y-6">
+        
+        <div class="text-center space-y-2">
+          <div class="inline-flex w-12 h-12 rounded-2xl bg-cyan-500/10 border border-cyan-500/30 items-center justify-center text-cyan-400 text-xl font-bold mb-1">
+            🩺
+          </div>
+          <h2 class="text-xl font-black text-slate-100">Veterinary Officer Portal</h2>
+          <p class="text-xs text-slate-400">Sign in or register with your government credentials to access regional quarantine mapping and live outbreak telemetry.</p>
+        </div>
+
+        <!-- Mode Toggle Tabs -->
+        <div class="flex bg-slate-950 p-1 rounded-xl border border-slate-800">
+          <button id="tab-signin" onclick="setAuthMode('signin')" class="flex-1 py-2 text-xs font-bold rounded-lg bg-cyan-500 text-slate-950 transition-all">
+            Sign In
+          </button>
+          <button id="tab-register" onclick="setAuthMode('register')" class="flex-1 py-2 text-xs font-bold rounded-lg text-slate-400 hover:text-slate-200 transition-all">
+            Register Officer
+          </button>
+        </div>
+
+        <!-- Auth Form -->
+        <form id="vet-auth-form" onsubmit="handleVetAuthSubmit(event)" class="space-y-4">
+          
+          <div id="register-fields" class="space-y-4 hidden">
+            <div>
+              <label class="block text-xs font-bold text-slate-300 mb-1">Full Name</label>
+              <input type="text" id="vet-name" placeholder="Dr. Sarah Mercer" class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-slate-100 focus:border-cyan-500 outline-none" />
+            </div>
+
+            <div>
+              <label class="block text-xs font-bold text-slate-300 mb-1">Village / Town / Station</label>
+              <input type="text" id="vet-village" placeholder="Eldoret Central Station" class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-slate-100 focus:border-cyan-500 outline-none" />
+            </div>
+
+            <div>
+              <label class="block text-xs font-bold text-slate-300 mb-1">Government Vet Doctor ID</label>
+              <input type="text" id="vet-lic-id" placeholder="VET-LIC-0994-HQ" class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-cyan-400 font-mono focus:border-cyan-500 outline-none" />
+            </div>
+          </div>
+
+          <div>
+            <label class="block text-xs font-bold text-slate-300 mb-1">Mobile Phone Number</label>
+            <input type="text" id="vet-phone" placeholder="+254 712 345678" class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-slate-100 focus:border-cyan-500 outline-none" />
+          </div>
+
+          <div id="otp-container" class="hidden space-y-2">
+            <label class="block text-xs font-bold text-cyan-400 mb-1">Enter 4-Digit Verification OTP</label>
+            <input type="text" id="vet-otp" maxlength="4" placeholder="••••" class="w-full bg-slate-950 border border-cyan-500/50 rounded-xl px-3.5 py-2.5 text-center font-mono tracking-widest text-lg text-cyan-300 outline-none" />
+          </div>
+
+          <button type="submit" id="auth-submit-btn" class="w-full py-3 rounded-xl bg-gradient-to-r from-cyan-500 to-teal-500 hover:from-cyan-400 text-slate-950 font-black text-xs uppercase tracking-wider shadow-lg shadow-cyan-950 transition-all">
+            Send Verification OTP
+          </button>
+
+        </form>
+
+      </div>
+    </div>
+
+    <!-- VETERINARY COMMAND CENTER DASHBOARD -->
+    <div id="dashboard-view" class="space-y-6 hidden">
+      
+      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-slate-900/60 border border-slate-800/80 p-3 rounded-2xl">
+        <div class="flex items-center gap-2">
+          <span class="w-2.5 h-2.5 rounded-full bg-cyan-400 animate-ping"></span>
+          <span class="text-xs font-bold text-slate-300">PostGIS Spatial Engine • SRID 4326</span>
+          <span id="api-status-badge" class="ml-2 text-[10px] px-2 py-0.5 rounded-full bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 font-mono">
+            API: Checking...
+          </span>
+        </div>
+
+        <div class="flex items-center gap-2">
+          <button onclick="seedMockData()" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg text-xs font-medium border border-slate-700 transition-all">
+            ✨ Seed Telemetry
+          </button>
+          <button onclick="loadAllData()" class="px-3 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-slate-950 rounded-lg text-xs font-bold transition-all">
+            ↻ Refresh Data
+          </button>
+        </div>
+      </div>
+
+      <div class="bg-gradient-to-r from-slate-900 via-cyan-950/40 to-slate-900 border border-cyan-500/30 rounded-2xl p-6 shadow-2xl flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div>
+          <div class="text-xs font-bold text-cyan-400 uppercase tracking-wider mb-1">OmniVet Directorate Command</div>
+          <h2 class="text-2xl font-black text-slate-100">Surveillance & Outbreak Quarantine Hub</h2>
+          <p class="text-xs text-slate-400 mt-1">Logged in Doctor: <span id="welcome-doc-name" class="text-cyan-300 font-semibold">Dr. Sarah Mercer</span></p>
+        </div>
+        <div class="px-3.5 py-1.5 rounded-lg bg-cyan-500/10 border border-cyan-500/20 text-xs text-cyan-400 font-bold">
+          Emergency Response Readiness: 100%
+        </div>
+      </div>
+
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div class="bg-slate-900/80 border border-slate-800 rounded-xl p-4">
+          <div class="text-xs font-medium text-slate-400 mb-1">Active High-Risk Outbreaks</div>
+          <div id="stat-high-risk" class="text-2xl font-bold text-rose-400">0</div>
+          <div class="text-[11px] text-rose-400 mt-1">Triggered: Blisters / Sudden Death</div>
+        </div>
+
+        <div class="bg-slate-900/80 border border-slate-800 rounded-xl p-4">
+          <div class="text-xs font-medium text-slate-400 mb-1">GIS Outbreak Clusters</div>
+          <div id="stat-clusters" class="text-2xl font-bold text-cyan-400">0</div>
+          <div class="text-[11px] text-cyan-300 mt-1">Plotted on PostGIS Map</div>
+        </div>
+
+        <div class="bg-slate-900/80 border border-slate-800 rounded-xl p-4">
+          <div class="text-xs font-medium text-slate-400 mb-1">Mortality Cases</div>
+          <div id="stat-mortality" class="text-2xl font-bold text-rose-300">0</div>
+          <div class="text-[11px] text-slate-400 mt-1">Confirmed animal casualties</div>
+        </div>
+
+        <div class="bg-slate-900/80 border border-slate-800 rounded-xl p-4">
+          <div class="text-xs font-medium text-slate-400 mb-1">Total Monitored Reports</div>
+          <div id="stat-total" class="text-2xl font-bold text-emerald-400">0</div>
+          <div class="text-[11px] text-emerald-400 mt-1">Community telemetry streams</div>
+        </div>
+      </div>
+
+      <div class="space-y-2">
+        <div class="flex items-center justify-between">
+          <div>
+            <h3 class="text-sm font-bold uppercase tracking-wider text-slate-200">GIS Outbreak Map (Leaflet / PostGIS)</h3>
+            <p class="text-xs text-slate-400">Pulsing red markers show flagged high-risk outbreaks with 5km quarantine perimeters</p>
+          </div>
+          <span class="text-xs text-cyan-400 bg-cyan-950/50 px-3 py-1 rounded-full border border-cyan-800/60 font-mono">
+            WGS 84 (SRID 4326)
+          </span>
+        </div>
+
+        <div class="relative w-full rounded-2xl overflow-hidden border border-slate-800 shadow-2xl bg-slate-950">
+          <div id="map" class="h-[460px] w-full z-0"></div>
+        </div>
+      </div>
+
+      <div class="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-2xl space-y-2">
+        <div class="p-4 border-b border-slate-800 flex items-center justify-between">
+          <div>
+            <h3 class="text-base font-bold text-slate-100">Live Triage Telemetry Table</h3>
+            <p class="text-xs text-slate-400">Showing farmer's name, animal species, symptoms, and risk levels with escalation action</p>
+          </div>
+        </div>
+
+        <div class="overflow-x-auto">
+          <table class="w-full text-left border-collapse text-xs">
+            <thead>
+              <tr class="bg-slate-950/60 border-b border-slate-800 text-slate-400 font-semibold uppercase">
+                <th class="py-3 px-4">ID</th>
+                <th class="py-3 px-4">Farmer Details</th>
+                <th class="py-3 px-4">Species</th>
+                <th class="py-3 px-4">Symptoms</th>
+                <th class="py-3 px-4">GPS Coordinates</th>
+                <th class="py-3 px-4">Risk Level</th>
+                <th class="py-3 px-4">Timestamp</th>
+                <th class="py-3 px-4 text-right">Veterinary Action</th>
+              </tr>
+            </thead>
+            <tbody id="reports-table-body" class="divide-y divide-slate-800">
+              <tr>
+                <td colspan="8" class="text-center py-6 text-slate-500">Loading surveillance telemetry...</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+    </div>
+
+  </main>
+
+  <script>
+    const API_URL = 'http://127.0.0.1:8000';
+    const SESSION_KEY = 'omnivet_vet_session';
+
+    let authMode = 'signin';
+    let otpRequested = false;
+    let map = null;
+    let markersLayer = null;
+
+    window.addEventListener('DOMContentLoaded', () => {
+      try {
+        const savedUser = localStorage.getItem(SESSION_KEY);
+        if (savedUser) {
+          const user = JSON.parse(savedUser);
+          showDashboard(user);
+        } else {
+          showAuthScreen();
+        }
+      } catch (err) {
+        console.error('Initialization error:', err);
+        showAuthScreen();
+      }
+    });
+
+    function setAuthMode(mode) {
+      authMode = mode;
+      otpRequested = false;
+      document.getElementById('otp-container').classList.add('hidden');
+      document.getElementById('auth-submit-btn').innerText = 'Send Verification OTP';
+
+      const signInTab = document.getElementById('tab-signin');
+      const regTab = document.getElementById('tab-register');
+      const regFields = document.getElementById('register-fields');
+
+      if (mode === 'signin') {
+        signInTab.className = 'flex-1 py-2 text-xs font-bold rounded-lg bg-cyan-500 text-slate-950 transition-all';
+        regTab.className = 'flex-1 py-2 text-xs font-bold rounded-lg text-slate-400 hover:text-slate-200 transition-all';
+        regFields.classList.add('hidden');
+      } else {
+        regTab.className = 'flex-1 py-2 text-xs font-bold rounded-lg bg-cyan-500 text-slate-950 transition-all';
+        signInTab.className = 'flex-1 py-2 text-xs font-bold rounded-lg text-slate-400 hover:text-slate-200 transition-all';
+        regFields.classList.remove('hidden');
+      }
+    }
+
+    function handleVetAuthSubmit(e) {
+      e.preventDefault();
+      const phone = document.getElementById('vet-phone').value.trim();
+
+      if (!phone || phone.length < 9) {
+        alert('Please enter a valid mobile number.');
+        return;
+      }
+
+      if (!otpRequested) {
+        otpRequested = true;
+        document.getElementById('otp-container').classList.remove('hidden');
+        document.getElementById('auth-submit-btn').innerText = authMode === 'signin' ? 'Verify & Sign In' : 'Complete Registration';
+        alert('OTP sent to your mobile phone.');
+        return;
+      }
+
+      const otp = document.getElementById('vet-otp').value.trim();
+      if (!otp || otp.length < 4) {
+        alert('Please enter the 4-digit verification code.');
+        return;
+      }
+
+      let vetObj = {};
+      if (authMode === 'register') {
+        const name = document.getElementById('vet-name').value.trim();
+        const village = document.getElementById('vet-village').value.trim();
+        const licId = document.getElementById('vet-lic-id').value.trim();
+
+        if (!name || !village || !licId) {
+          alert('Please fill in all registration fields including your Vet License ID.');
+          return;
+        }
+
+        vetObj = { name, village, licId, phone };
+      } else {
+        vetObj = { name: 'Dr. Veterinary Officer', village: 'HQ Command', licId: 'VET-LIC-HQ', phone };
+      }
+
+      localStorage.setItem(SESSION_KEY, JSON.stringify(vetObj));
+      showDashboard(vetObj);
+    }
+
+    function showDashboard(user) {
+      document.getElementById('auth-view').classList.add('hidden');
+      document.getElementById('dashboard-view').classList.remove('hidden');
+      document.getElementById('nav-user-section').classList.remove('hidden');
+      document.getElementById('nav-user-section').classList.add('flex');
+
+      document.getElementById('nav-vet-name').innerText = user.name;
+      document.getElementById('nav-vet-id').innerText = `ID: ${user.licId || 'VET-HQ'}`;
+      document.getElementById('welcome-doc-name').innerText = user.name;
+
+      loadAllData();
+    }
+
+    function handleVetLogout() {
+      localStorage.removeItem(SESSION_KEY);
+      showAuthScreen();
+    }
+
+    function showAuthScreen() {
+      document.getElementById('dashboard-view').classList.add('hidden');
+      document.getElementById('nav-user-section').classList.add('hidden');
+      document.getElementById('auth-view').classList.remove('hidden');
+    }
+
+    function initMap() {
+      if (map) return;
+      if (typeof L === 'undefined') {
+        console.warn('Leaflet script not loaded yet.');
+        return;
+      }
+      try {
+        map = L.map('map').setView([-1.2921, 36.8219], 11);
+        L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
+          attribution: '&copy; OpenStreetMap &copy; CARTO'
+        }).addTo(map);
+        markersLayer = L.layerGroup().addTo(map);
+      } catch (err) {
+        console.error('Map initialization error:', err);
+      }
+    }
+
+    async function loadAllData() {
+      try {
+        initMap();
+        
+        let reports = [];
+        let outbreaks = [];
+
+        try {
+          const reportsRes = await fetch(`${API_URL}/api/reports`);
+          if (reportsRes.ok) reports = await reportsRes.json();
+          const outbreaksRes = await fetch(`${API_URL}/api/outbreaks`);
+          if (outbreaksRes.ok) outbreaks = await outbreaksRes.json();
+
+          document.getElementById('api-status-badge').innerText = 'API: Online';
+          document.getElementById('api-status-badge').className = 'ml-2 text-[10px] px-2 py-0.5 rounded-full bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 font-mono';
+        } catch (apiErr) {
+          console.warn('API backend not reachable, running offline dashboard view.');
+          document.getElementById('api-status-badge').innerText = 'API: Offline (Mock Mode)';
+          document.getElementById('api-status-badge').className = 'ml-2 text-[10px] px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/20 font-mono';
+        }
+
+        const highRisk = reports.filter(r => r.status === 'flagged_high_risk' || r.status === 'escalated_quarantine_alert').length;
+        document.getElementById('stat-high-risk').innerText = highRisk;
+        document.getElementById('stat-clusters').innerText = outbreaks.length;
+        document.getElementById('stat-mortality').innerText = reports.filter(r => r.mortality_status).length;
+        document.getElementById('stat-total').innerText = reports.length;
+
+        renderMapMarkers(outbreaks);
+        renderTable(reports);
+      } catch (e) {
+        console.error('Data loading error:', e);
+      }
+    }
+
+    function renderMapMarkers(outbreaks) {
+      if (!markersLayer) return;
+      markersLayer.clearLayers();
+      if (!outbreaks || outbreaks.length === 0) return;
+
+      const customIcon = L.divIcon({
+        className: 'custom-marker',
+        html: '<div class="pulse-red-marker"></div>',
+        iconSize: [22, 22],
+        iconAnchor: [11, 11],
+        popupAnchor: [0, -12]
+      });
+
+      outbreaks.forEach(o => {
+        L.circle([o.latitude, o.longitude], {
+          radius: 5000,
+          color: '#ef4444',
+          fillColor: '#ef4444',
+          fillOpacity: 0.12,
+          weight: 1.5,
+          dashArray: '4, 6'
+        }).addTo(markersLayer);
+
+        const marker = L.marker([o.latitude, o.longitude], { icon: customIcon }).addTo(markersLayer);
+        marker.bindPopup(`
+          <div class="p-1 space-y-1 text-xs">
+            <div class="font-bold text-rose-400">OUTBREAK ALERT #${o.id}</div>
+            <div><b>Species:</b> ${o.species}</div>
+            <div><b>Farmer:</b> ${o.farmer_name}</div>
+            <div><b>Symptoms:</b> ${o.symptoms}</div>
+            <button onclick="escalateReport(${o.id})" class="mt-2 w-full py-1 bg-rose-600 text-white rounded font-bold hover:bg-rose-700">
+              Escalate Quarantine
+            </button>
+          </div>
+        `);
+      });
+
+      const latlngs = outbreaks.map(o => [o.latitude, o.longitude]);
+      if (latlngs.length > 0 && map) {
+        map.fitBounds(latlngs, { padding: [40, 40] });
+      }
+    }
+
+    function renderTable(reports) {
+      const tbody = document.getElementById('reports-table-body');
+      if (!reports || reports.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="8" class="text-center py-6 text-slate-500">No surveillance records found or API offline.</td></tr>';
+        return;
+      }
+      tbody.innerHTML = reports.map(r => {
+        const isHigh = r.status === 'flagged_high_risk' || r.mortality_status;
+        const isEscalated = r.status === 'escalated_quarantine_alert';
+        let badge = '<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-800 text-slate-300">PENDING</span>';
+        if (isEscalated) badge = '<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-red-950 text-rose-300 border border-rose-800 animate-pulse">QUARANTINE ALERT</span>';
+        else if (isHigh) badge = '<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-500/20 text-rose-400 border border-rose-500/30">HIGH RISK</span>';
+
+        const action = isEscalated 
+          ? '<span class="text-cyan-400 font-bold">✓ Escalated</span>' 
+          : `<button onclick="escalateReport(${r.id})" class="px-2.5 py-1 bg-rose-600 hover:bg-rose-700 text-white font-bold rounded text-[11px]">Escalate</button>`;
+
+        return `
+          <tr class="hover:bg-slate-800/40">
+            <td class="py-2.5 px-4 font-mono">#${r.id}</td>
+            <td class="py-2.5 px-4 font-bold text-slate-200">${r.farmer_name || 'Farmer'}</td>
+            <td class="py-2.5 px-4 text-cyan-300 font-semibold">${r.species || 'Cattle'}</td>
+            <td class="py-2.5 px-4">${r.symptoms}</td>
+            <td class="py-2.5 px-4 font-mono text-[11px] text-slate-400">${(r.latitude || 0).toFixed(4)}, ${(r.longitude || 0).toFixed(4)}</td>
+            <td class="py-2.5 px-4">${badge}</td>
+            <td class="py-2.5 px-4 text-slate-400 text-[11px]">${r.timestamp ? new Date(r.timestamp).toLocaleDateString() : 'N/A'}</td>
+            <td class="py-2.5 px-4 text-right">${action}</td>
+          </tr>
+        `;
+      }).join('');
+    }
+
+    async function escalateReport(id) {
+      try {
+        await fetch(`${API_URL}/api/reports/${id}/escalate`, { method: 'POST' });
+        loadAllData();
+      } catch (err) {
+        alert('Could not escalate: ' + err.message);
+      }
+    }
+
+    async function seedMockData() {
+      try {
+        await fetch(`${API_URL}/api/seed`, { method: 'POST' });
+        loadAllData();
+      } catch (err) {
+        alert('Could not seed: ' + err.message);
+      }
+    }
+  </script>
+</body>
+</html>

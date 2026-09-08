@@ -1,45 +1,67 @@
-import datetime
-from sqlalchemy import Column, Integer, String, Boolean, Float, DateTime, ForeignKey, Text
-from sqlalchemy.orm import relationship
-from app.database import Base
+from sqlalchemy import Column, Integer, String, Float, Boolean, DateTime, ARRAY, JSON
+from datetime import datetime, timezone
+try:
+    from .database import Base
+except (ImportError, ValueError):
+    try:
+        from app.database import Base
+    except (ImportError, ValueError):
+        from database import Base
 
-def utc_now():
-    return datetime.datetime.now(datetime.timezone.utc)
-
-class User(Base):
-    __tablename__ = "users"
-
-    id = Column(Integer, primary_key=True, index=True)
-    name = Column(String(120), nullable=False)
-    role = Column(String(50), nullable=False, default="farmer")  # farmer, vet, admin
-    phone_number = Column(String(30), nullable=False, unique=True, index=True)
-
-    livestock = relationship("Livestock", back_populates="owner", cascade="all, delete-orphan")
-
-
-class Livestock(Base):
-    __tablename__ = "livestock"
+class Report(Base):
+    __tablename__ = "reports"
 
     id = Column(Integer, primary_key=True, index=True)
-    owner_id = Column(Integer, ForeignKey("users.id"), nullable=False)
-    species = Column(String(80), nullable=False)  # Cattle, Goat, Sheep, Swine, Poultry, etc.
-    age = Column(Integer, nullable=True)          # Age in months
-    vaccination_status = Column(String(50), default="unknown")  # up_to_date, partially_vaccinated, unvaccinated, unknown
-
-    owner = relationship("User", back_populates="livestock")
-    reports = relationship("HealthReport", back_populates="livestock", cascade="all, delete-orphan")
-
-
-class HealthReport(Base):
-    __tablename__ = "health_reports"
-
-    id = Column(Integer, primary_key=True, index=True)
-    livestock_id = Column(Integer, ForeignKey("livestock.id"), nullable=False)
-    symptoms = Column(Text, nullable=False)  # JSON or comma-separated string
-    mortality_status = Column(Boolean, default=False, nullable=False)
+    farmer_name = Column(String, nullable=False)
+    farmer_phone = Column(String, nullable=True)
+    species = Column(String, nullable=False)
+    symptoms = Column(ARRAY(String).with_variant(JSON, "sqlite"), nullable=True)
     latitude = Column(Float, nullable=False)
     longitude = Column(Float, nullable=False)
-    status = Column(String(50), default="pending", nullable=False)  # pending, flagged, flagged_high_risk, resolved
-    timestamp = Column(DateTime(timezone=True), default=utc_now, nullable=False)
+    mortality_status = Column(Boolean, default=False)
+    status = Column(String, default="pending")
+    timestamp = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    village = Column(String, nullable=True)
+    district = Column(String, nullable=True)
 
-    livestock = relationship("Livestock", back_populates="reports")
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "report_id": self.id,
+            "farmer_name": self.farmer_name,
+            "farmer_phone": self.farmer_phone,
+            "species": self.species,
+            "symptoms": self.symptoms or [],
+            "latitude": self.latitude,
+            "longitude": self.longitude,
+            "mortality_status": self.mortality_status,
+            "status": self.status,
+            "timestamp": self.timestamp.isoformat() if self.timestamp else None,
+            "village": self.village,
+            "district": self.district,
+            "success": True,
+        }
+
+class Outbreak(Base):
+    __tablename__ = "outbreaks"
+
+    id = Column(Integer, primary_key=True, index=True)
+    latitude = Column(Float, nullable=False)
+    longitude = Column(Float, nullable=False)
+    radius_km = Column(Float, default=10.0)
+    species = Column(String, nullable=False)
+    farmer_name = Column(String, nullable=False)
+    symptoms = Column(String, nullable=True)
+    status = Column(String, default="flagged_high_risk")
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "latitude": self.latitude,
+            "longitude": self.longitude,
+            "radius_km": self.radius_km,
+            "species": self.species,
+            "farmer_name": self.farmer_name,
+            "symptoms": self.symptoms,
+            "status": self.status or "flagged_high_risk",
+        }

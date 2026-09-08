@@ -8,18 +8,14 @@ import {
   ScrollView,
   Switch,
   Alert,
-  SafeAreaView,
   ActivityIndicator,
   Platform,
   StatusBar,
 } from 'react-native';
+import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import NetInfo from '@react-native-community/netinfo';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import {
-  saveOfflineReport,
-  getPendingReports,
-} from './src/services/storage';
-import { syncPendingReports, checkIsConnected } from './src/services/syncService';
+import { checkIsConnected } from './src/services/syncService';
 import { detectSelfLocation } from './src/services/locationService';
 import { AuthScreen } from './src/components/AuthScreen';
 import { OutcomesShowcase } from './src/components/OutcomesShowcase';
@@ -39,6 +35,16 @@ const COMMON_SYMPTOMS = [
   'skin sores',
 ];
 
+const resolveDefaultApiUrl = () => {
+  if (process.env.EXPO_PUBLIC_API_URL) {
+    return process.env.EXPO_PUBLIC_API_URL.replace(/\/$/, '');
+  }
+  if (Platform.OS === 'web') {
+    return 'http://127.0.0.1:8000';
+  }
+  return 'http://10.0.2.2:8000';
+};
+
 export default function App() {
   const [currentUser, setCurrentUser] = useState(null);
   const [authChecking, setAuthChecking] = useState(true);
@@ -57,12 +63,10 @@ export default function App() {
   const [locationStatus, setLocationStatus] = useState(null);
 
   const [isOnline, setIsOnline] = useState(true);
-  const [pendingCount, setPendingCount] = useState(0);
-  const [isSyncing, setIsSyncing] = useState(false);
   const [statusMessage, setStatusMessage] = useState(null);
-  const [apiUrl, setApiUrl] = useState(
-    Platform.OS === 'android' ? 'http://10.0.2.2:8000' : 'http://localhost:8000'
-  );
+
+  // Backend API URL (dynamic via EXPO_PUBLIC_API_URL, Web/Emulator auto-detection, or custom setting)
+  const [apiUrl, setApiUrl] = useState(resolveDefaultApiUrl());
 
   useEffect(() => {
     (async () => {
@@ -72,6 +76,10 @@ export default function App() {
           const parsed = JSON.parse(savedSession);
           setCurrentUser(parsed);
           if (parsed.village) setVillage(parsed.village);
+        }
+        const savedApiUrl = await AsyncStorage.getItem('@omnivet_api_url');
+        if (savedApiUrl) {
+          setApiUrl(savedApiUrl);
         }
       } catch (err) {
         console.warn('Session reading note:', err);
@@ -117,48 +125,59 @@ export default function App() {
     }
   };
 
-  const refreshPendingCount = useCallback(async () => {
-    const list = await getPendingReports();
-    setPendingCount(list.length);
-  }, []);
-
-  const triggerSync = useCallback(async () => {
-    setIsSyncing(true);
-    try {
-      const result = await syncPendingReports(apiUrl);
-      if (result.synced > 0) {
-        showMessage(`Synced ${result.synced} offline report(s) to OmniVet Doctors!`);
-      }
-      await refreshPendingCount();
-    } catch (err) {
-      console.warn('Sync attempt note:', err);
-    } finally {
-      setIsSyncing(false);
-    }
-  }, [apiUrl, refreshPendingCount]);
-
   const showMessage = (msg) => {
     setStatusMessage(msg);
     setTimeout(() => setStatusMessage(null), 4500);
   };
 
+  const promptChangeApiUrl = () => {
+    if (Platform.OS === 'web') {
+      const entered = window.prompt('Enter OmniVet FastAPI Backend URL (e.g. http://127.0.0.1:8000, http://192.168.206.53:8000, or https://omnivet-backend.vercel.app):', apiUrl);
+      if (entered && entered.trim()) {
+        const clean = entered.trim().replace(/\/$/, '');
+        setApiUrl(clean);
+        AsyncStorage.setItem('@omnivet_api_url', clean).catch(() => {});
+        showMessage(`Backend set to: ${clean}`);
+      }
+    } else {
+      if (Alert.prompt) {
+        Alert.prompt(
+          'Change Backend Server URL',
+          'Enter your backend API URL:',
+          (text) => {
+            if (text && text.trim()) {
+              const clean = text.trim().replace(/\/$/, '');
+              setApiUrl(clean);
+              AsyncStorage.setItem('@omnivet_api_url', clean).catch(() => {});
+              showMessage(`Backend set to: ${clean}`);
+            }
+          },
+          'plain-text',
+          apiUrl
+        );
+      } else {
+        Alert.alert(
+          'Backend Server URL',
+          `Currently connected to:\n${apiUrl}\n\nTo change, set EXPO_PUBLIC_API_URL or run in web browser to edit.`
+        );
+      }
+    }
+  };
+
   useEffect(() => {
     if (!currentUser) return;
-    refreshPendingCount();
 
     checkIsConnected().then((online) => {
       setIsOnline(online);
-      if (online) triggerSync();
     });
 
     const unsubscribe = NetInfo.addEventListener((state) => {
       const online = Boolean(state.isConnected && state.isInternetReachable !== false);
       setIsOnline(online);
-      if (online) triggerSync();
     });
 
     return () => unsubscribe();
-  }, [currentUser, triggerSync, refreshPendingCount]);
+  }, [currentUser]);
 
   const handleAutoDetectLocation = async () => {
     setIsLocating(true);
@@ -214,12 +233,8 @@ export default function App() {
     };
 
     const currentlyOnline = await checkIsConnected();
-
     if (!currentlyOnline) {
-      await saveOfflineReport(reportData);
-      await refreshPendingCount();
-      Alert.alert('Saved Offline', 'No internet right now. Report saved safely on your phone and will send automatically when connected.');
-      showMessage('Saved offline. Will sync when connected.');
+      Alert.alert('Network Error', 'Network Error: Please connect to the internet to submit your report.');
       return;
     }
 
@@ -244,21 +259,20 @@ export default function App() {
         throw new Error(`HTTP ${res.status}`);
       }
     } catch (error) {
-      await saveOfflineReport(reportData);
-      await refreshPendingCount();
-      Alert.alert('Connection Interrupted', 'Saved safely on phone. Will sync automatically.');
-      showMessage('Saved offline. Will sync when connected.');
+      Alert.alert('Network Error', 'Network Error: Please connect to the internet to submit your report.');
     }
   };
 
   if (authChecking) {
     return (
-      <SafeAreaView style={[styles.safeArea, { alignItems: 'center', justifyContent: 'center' }]}>
-        <ActivityIndicator size="large" color="#D97706" />
-        <Text style={{ color: '#78350F', marginTop: 14, fontSize: 14, fontWeight: '700' }}>
-          Opening OmniVet...
-        </Text>
-      </SafeAreaView>
+      <SafeAreaProvider>
+        <SafeAreaView style={[styles.safeArea, { alignItems: 'center', justifyContent: 'center' }]}>
+          <ActivityIndicator size="large" color="#D97706" />
+          <Text style={{ color: '#78350F', marginTop: 14, fontSize: 14, fontWeight: '700' }}>
+            Opening OmniVet...
+          </Text>
+        </SafeAreaView>
+      </SafeAreaProvider>
     );
   }
 
@@ -267,197 +281,198 @@ export default function App() {
   }
 
   return (
-    <SafeAreaView style={styles.safeArea}>
-      <StatusBar barStyle="dark-content" backgroundColor="#FFFDF9" />
+    <SafeAreaProvider>
+      <SafeAreaView style={styles.safeArea}>
+        <StatusBar barStyle="dark-content" backgroundColor="#FFFDF9" />
 
-      {/* FARMER PROFILE HEADER */}
-      <View style={styles.header}>
-        <View style={styles.headerTopRow}>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.appTitle}>🐾 OMNIVET</Text>
-            <Text style={styles.farmerNameText}>{currentUser.name}</Text>
-            <Text style={styles.farmerSubText}>
-              📍 {currentUser.village || village || 'Village'} • 📞 {currentUser.phone}
-            </Text>
-          </View>
-
-          <TouchableOpacity style={styles.logoutBtn} onPress={handleLogout}>
-            <Text style={styles.logoutBtnText}>Log Out</Text>
-          </TouchableOpacity>
-        </View>
-
-        <View style={styles.statusBarRow}>
-          <View style={[styles.statusPill, isOnline ? styles.pillOnline : styles.pillOffline]}>
-            <View style={[styles.dot, isOnline ? styles.dotOnline : styles.dotOffline]} />
-            <Text style={styles.statusText}>
-              {isOnline ? 'Internet Connected (Direct Send)' : 'Offline Mode (Saves on Phone)'}
-            </Text>
-          </View>
-
-          {pendingCount > 0 && (
-            <TouchableOpacity style={styles.syncBadge} onPress={triggerSync} disabled={isSyncing}>
-              {isSyncing ? (
-                <ActivityIndicator size="small" color="#D97706" />
-              ) : (
-                <Text style={styles.syncBadgeText}>{pendingCount} Saved Offline</Text>
-              )}
-            </TouchableOpacity>
-          )}
-        </View>
-
-        <View style={styles.tabRow}>
-          <TouchableOpacity
-            style={[styles.tabBtn, activeTab === 'report' && styles.tabBtnActive]}
-            onPress={() => setActiveTab('report')}
-          >
-            <Text style={[styles.tabBtnText, activeTab === 'report' && styles.tabBtnTextActive]}>
-              📋 Report Sick Animal
-            </Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[styles.tabBtn, activeTab === 'outcomes' && styles.tabBtnActiveOutcomes]}
-            onPress={() => setActiveTab('outcomes')}
-          >
-            <Text style={[styles.tabBtnText, activeTab === 'outcomes' && styles.tabBtnTextActiveOutcomes]}>
-              🌾 6 Key Benefits
-            </Text>
-          </TouchableOpacity>
-        </View>
-      </View>
-
-      {statusMessage && (
-        <View style={styles.toastBanner}>
-          <Text style={styles.toastText}>{statusMessage}</Text>
-        </View>
-      )}
-
-      {activeTab === 'outcomes' ? (
-        <OutcomesShowcase />
-      ) : (
-        <ScrollView style={styles.formContainer} contentContainerStyle={{ paddingBottom: 40 }}>
-          <View style={styles.section}>
-            <Text style={styles.label}>1. Which animal is sick?</Text>
-            <View style={styles.chipsContainer}>
-              {SPECIES_OPTIONS.map((item) => {
-                const active = species === item;
-                return (
-                  <TouchableOpacity
-                    key={item}
-                    style={[styles.chip, active && styles.chipActive]}
-                    onPress={() => setSpecies(item)}
-                  >
-                    <Text style={[styles.chipText, active && styles.chipTextActive]}>{item}</Text>
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
-          </View>
-
-          <View style={styles.section}>
-            <View style={styles.labelRow}>
-              <Text style={styles.label}>2. What signs do you see?</Text>
-              <Text style={styles.helperText}>⚠️ Red = Dangerous signs</Text>
-            </View>
-
-            <View style={styles.chipsContainer}>
-              {COMMON_SYMPTOMS.map((item) => {
-                const active = selectedSymptoms.includes(item);
-                const isTrigger = item === 'blisters' || item === 'high fever' || item === 'sudden death';
-                return (
-                  <TouchableOpacity
-                    key={item}
-                    style={[
-                      styles.symptomChip,
-                      active && (isTrigger ? styles.symptomChipActiveAlert : styles.symptomChipActive),
-                    ]}
-                    onPress={() => toggleSymptom(item)}
-                  >
-                    <Text
-                      style={[
-                        styles.symptomChipText,
-                        active && styles.symptomChipTextActive,
-                        isTrigger && !active && styles.triggerNotice,
-                      ]}
-                    >
-                      {item} {isTrigger ? '⚠️' : ''}
-                    </Text>
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
-
-            <View style={styles.customInputRow}>
-              <TextInput
-                style={styles.inputFlex}
-                placeholder="Other symptom (type here)..."
-                placeholderTextColor="#A89F91"
-                value={customSymptom}
-                onChangeText={setCustomSymptom}
-              />
-              <TouchableOpacity style={styles.addBtn} onPress={addCustomSymptom}>
-                <Text style={styles.addBtnText}>+ Add</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-
-          <View style={[styles.section, styles.toggleSection]}>
-            <View style={{ flex: 1, paddingRight: 10 }}>
-              <Text style={styles.label}>3. Is the animal alive or dead?</Text>
-              <Text style={styles.sublabel}>
-                {isMortality ? 'Animal has died (Emergency Outbreak Flag)' : 'Animal is sick but alive'}
+        {/* FARMER PROFILE HEADER */}
+        <View style={styles.header}>
+          <View style={styles.headerTopRow}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.appTitle}>🐾 OMNIVET</Text>
+              <Text style={styles.farmerNameText}>{currentUser.name}</Text>
+              <Text style={styles.farmerSubText}>
+                📍 {currentUser.village || village || 'Village'} • 📞 {currentUser.phone}
               </Text>
             </View>
-            <Switch
-              value={isMortality}
-              onValueChange={setIsMortality}
-              trackColor={{ false: '#FDE68A', true: '#C2410C' }}
-              thumbColor={isMortality ? '#9A3412' : '#FFFFFF'}
-            />
+
+            <TouchableOpacity style={styles.logoutBtn} onPress={handleLogout}>
+              <Text style={styles.logoutBtnText}>Log Out</Text>
+            </TouchableOpacity>
           </View>
 
-          <View style={styles.section}>
-            <View style={styles.labelRow}>
-              <Text style={styles.label}>4. Where is your farm?</Text>
-              <TouchableOpacity
-                style={styles.detectLocationBtn}
-                onPress={handleAutoDetectLocation}
-                disabled={isLocating}
-              >
-                {isLocating ? (
-                  <ActivityIndicator size="small" color="#FFFFFF" />
-                ) : (
-                  <Text style={styles.detectLocationBtnText}>📍 Use My Current Location</Text>
-                )}
-              </TouchableOpacity>
+          <View style={styles.statusBarRow}>
+            <View style={[styles.statusPill, isOnline ? styles.pillOnline : styles.pillOffline]}>
+              <View style={[styles.dot, isOnline ? styles.dotOnline : styles.dotOffline]} />
+              <Text style={styles.statusText}>
+                {isOnline ? 'Online (Direct Send)' : 'Offline (Internet Required)'}
+              </Text>
             </View>
 
-            {locationStatus && (
-              <Text style={styles.locationFeedbackText}>{locationStatus}</Text>
-            )}
-
-            <TextInput
-              style={styles.textInput}
-              placeholder="Village or Town Name"
-              placeholderTextColor="#A89F91"
-              value={village}
-              onChangeText={setVillage}
-            />
-            <TextInput
-              style={[styles.textInput, { marginTop: 8 }]}
-              placeholder="District / Area"
-              placeholderTextColor="#A89F91"
-              value={district}
-              onChangeText={setDistrict}
-            />
+            <TouchableOpacity
+              style={[styles.statusPill, { backgroundColor: '#FEF3C7', borderColor: '#FDE68A' }]}
+              onPress={promptChangeApiUrl}
+            >
+              <Text style={[styles.statusText, { color: '#92400E', fontSize: 10 }]}>
+                🌐 {apiUrl.replace('https://', '').replace('http://', '')} (Tap to change)
+              </Text>
+            </TouchableOpacity>
           </View>
 
-          <TouchableOpacity style={styles.submitButton} onPress={handleSubmit}>
-            <Text style={styles.submitButtonText}>SEND REPORT TO DOCTOR</Text>
-          </TouchableOpacity>
-        </ScrollView>
-      )}
-    </SafeAreaView>
+          <View style={styles.tabRow}>
+            <TouchableOpacity
+              style={[styles.tabBtn, activeTab === 'report' && styles.tabBtnActive]}
+              onPress={() => setActiveTab('report')}
+            >
+              <Text style={[styles.tabBtnText, activeTab === 'report' && styles.tabBtnTextActive]}>
+                📋 Report Sick Animal
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.tabBtn, activeTab === 'outcomes' && styles.tabBtnActiveOutcomes]}
+              onPress={() => setActiveTab('outcomes')}
+            >
+              <Text style={[styles.tabBtnText, activeTab === 'outcomes' && styles.tabBtnTextActiveOutcomes]}>
+                🌾 6 Key Benefits
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+
+        {statusMessage && (
+          <View style={styles.toastBanner}>
+            <Text style={styles.toastText}>{statusMessage}</Text>
+          </View>
+        )}
+
+        {activeTab === 'outcomes' ? (
+          <OutcomesShowcase />
+        ) : (
+          <ScrollView style={styles.formContainer} contentContainerStyle={{ paddingBottom: 40 }}>
+            <View style={styles.section}>
+              <Text style={styles.label}>1. Which animal is sick?</Text>
+              <View style={styles.chipsContainer}>
+                {SPECIES_OPTIONS.map((item) => {
+                  const active = species === item;
+                  return (
+                    <TouchableOpacity
+                      key={item}
+                      style={[styles.chip, active && styles.chipActive]}
+                      onPress={() => setSpecies(item)}
+                    >
+                      <Text style={[styles.chipText, active && styles.chipTextActive]}>{item}</Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            </View>
+
+            <View style={styles.section}>
+              <View style={styles.labelRow}>
+                <Text style={styles.label}>2. What signs do you see?</Text>
+                <Text style={styles.helperText}>⚠️ Red = Dangerous signs</Text>
+              </View>
+
+              <View style={styles.chipsContainer}>
+                {COMMON_SYMPTOMS.map((item) => {
+                  const active = selectedSymptoms.includes(item);
+                  const isTrigger = item === 'blisters' || item === 'high fever' || item === 'sudden death';
+                  return (
+                    <TouchableOpacity
+                      key={item}
+                      style={[
+                        styles.symptomChip,
+                        active && (isTrigger ? styles.symptomChipActiveAlert : styles.symptomChipActive),
+                      ]}
+                      onPress={() => toggleSymptom(item)}
+                    >
+                      <Text
+                        style={[
+                          styles.symptomChipText,
+                          active && styles.symptomChipTextActive,
+                          isTrigger && !active && styles.triggerNotice,
+                        ]}
+                      >
+                        {item} {isTrigger ? '⚠️' : ''}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+
+              <View style={styles.customInputRow}>
+                <TextInput
+                  style={styles.inputFlex}
+                  placeholder="Other symptom (type here)..."
+                  placeholderTextColor="#A89F91"
+                  value={customSymptom}
+                  onChangeText={setCustomSymptom}
+                />
+                <TouchableOpacity style={styles.addBtn} onPress={addCustomSymptom}>
+                  <Text style={styles.addBtnText}>+ Add</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+
+            <View style={[styles.section, styles.toggleSection]}>
+              <View style={{ flex: 1, paddingRight: 10 }}>
+                <Text style={styles.label}>3. Is the animal alive or dead?</Text>
+                <Text style={styles.sublabel}>
+                  {isMortality ? 'Animal has died (Emergency Outbreak Flag)' : 'Animal is sick but alive'}
+                </Text>
+              </View>
+              <Switch
+                value={isMortality}
+                onValueChange={setIsMortality}
+                trackColor={{ false: '#FDE68A', true: '#C2410C' }}
+                thumbColor={isMortality ? '#9A3412' : '#FFFFFF'}
+              />
+            </View>
+
+            <View style={styles.section}>
+              <View style={styles.labelRow}>
+                <Text style={styles.label}>4. Where is your farm?</Text>
+                <TouchableOpacity
+                  style={styles.detectLocationBtn}
+                  onPress={handleAutoDetectLocation}
+                  disabled={isLocating}
+                >
+                  {isLocating ? (
+                    <ActivityIndicator size="small" color="#FFFFFF" />
+                  ) : (
+                    <Text style={styles.detectLocationBtnText}>📍 Use My Current Location</Text>
+                  )}
+                </TouchableOpacity>
+              </View>
+
+              {locationStatus && (
+                <Text style={styles.locationFeedbackText}>{locationStatus}</Text>
+              )}
+
+              <TextInput
+                style={styles.textInput}
+                placeholder="Village or Town Name"
+                placeholderTextColor="#A89F91"
+                value={village}
+                onChangeText={setVillage}
+              />
+              <TextInput
+                style={[styles.textInput, { marginTop: 8 }]}
+                placeholder="District / Area"
+                placeholderTextColor="#A89F91"
+                value={district}
+                onChangeText={setDistrict}
+              />
+            </View>
+
+            <TouchableOpacity style={styles.submitButton} onPress={handleSubmit}>
+              <Text style={styles.submitButtonText}>SEND REPORT TO DOCTOR</Text>
+            </TouchableOpacity>
+          </ScrollView>
+        )}
+      </SafeAreaView>
+    </SafeAreaProvider>
   );
 }
 

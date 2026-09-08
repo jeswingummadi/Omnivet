@@ -1,39 +1,44 @@
 import os
-import logging
-from sqlalchemy import create_engine, text
-from sqlalchemy.orm import declarative_base, sessionmaker
+from pathlib import Path
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker, declarative_base
 from dotenv import load_dotenv
 
+# Search for .env in: current dir, backend/ dir, and parent root dir
 load_dotenv()
+backend_dir = Path(__file__).resolve().parent.parent
+load_dotenv(backend_dir / ".env")
+load_dotenv(backend_dir.parent / ".env")
 
-logger = logging.getLogger("uvicorn")
+# Neon DB connection string from environment variables
+DATABASE_URL = os.getenv("DATABASE_URL")
 
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/animal_surveillance")
+# Auto-recovery: if the user pasted a raw connection string into .env without "DATABASE_URL="
+if not DATABASE_URL:
+    candidate_paths = [backend_dir / ".env", backend_dir.parent / ".env", Path(".env")]
+    for env_path in candidate_paths:
+        if env_path.exists():
+            try:
+                for line in env_path.read_text(encoding="utf-8").splitlines():
+                    cleaned = line.strip()
+                    if cleaned.startswith("postgres://") or cleaned.startswith("postgresql://"):
+                        DATABASE_URL = cleaned
+                        break
+            except Exception:
+                pass
+        if DATABASE_URL:
+            break
 
-def get_engine():
-    is_postgres = DATABASE_URL.startswith("postgresql")
-    try:
-        connect_args = {} if is_postgres else {"check_same_thread": False}
-        eng = create_engine(DATABASE_URL, connect_args=connect_args)
-        # Test connection
-        with eng.connect() as conn:
-            if is_postgres:
-                try:
-                    conn.execute(text("CREATE EXTENSION IF NOT EXISTS postgis;"))
-                    conn.commit()
-                    logger.info("PostGIS extension initialized successfully.")
-                except Exception as ext_err:
-                    logger.warning(f"Could not enable PostGIS extension (might already exist or lack superuser): {ext_err}")
-            else:
-                logger.info("Using SQLite database.")
-        return eng
-    except Exception as e:
-        logger.warning(f"Could not connect to PostgreSQL at {DATABASE_URL}: {e}")
-        logger.warning("Falling back to local SQLite database: sqlite:///./animal_surveillance.db")
-        sqlite_url = "sqlite:///./animal_surveillance.db"
-        return create_engine(sqlite_url, connect_args={"check_same_thread": False})
+# Ensure connection string starts with postgresql:// for SQLAlchemy
+if DATABASE_URL and DATABASE_URL.startswith("postgres://"):
+    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
-engine = get_engine()
+# Fallback for local offline tests without internet/Neon
+if not DATABASE_URL:
+    DATABASE_URL = "sqlite:///./animal_surveillance.db"
+
+connect_args = {"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {}
+engine = create_engine(DATABASE_URL, pool_pre_ping=True, connect_args=connect_args)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 

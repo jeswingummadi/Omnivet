@@ -2,7 +2,14 @@ import React, { useEffect, useState, useRef } from 'react';
 import Head from 'next/head';
 
 export default function OmniVetDashboard() {
-  const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const DEFAULT_OFFICER = {
+    name: 'Dr. Suresh Kumar (Official Vet)',
+    village: 'Central Surveillance Command',
+    licId: 'VET-IND-001',
+    phone: '+91 98765 43210'
+  };
+
+  const [isLoggedIn, setIsLoggedIn] = useState(true);
   const [authMode, setAuthMode] = useState('signin');
   const [otpRequested, setOtpRequested] = useState(false);
   const [phone, setPhone] = useState('');
@@ -10,14 +17,28 @@ export default function OmniVetDashboard() {
   const [name, setName] = useState('');
   const [village, setVillage] = useState('');
   const [licId, setLicId] = useState('');
-  const [user, setUser] = useState(null);
+  const [user, setUser] = useState(DEFAULT_OFFICER);
 
   // Dashboard Data State
   const [reports, setReports] = useState([]);
   const [outbreaks, setOutbreaks] = useState([]);
   const [apiStatus, setApiStatus] = useState('Connecting...');
 
-  const API_URL = 'http://127.0.0.1:8000';
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
+  const getApiUrl = () => {
+    if (process.env.NEXT_PUBLIC_API_URL) {
+      return process.env.NEXT_PUBLIC_API_URL.replace(/\/$/, '');
+    }
+    if (typeof window !== 'undefined') {
+      const host = window.location.hostname;
+      if (host === 'localhost' || host === '127.0.0.1') {
+        return 'http://127.0.0.1:8000';
+      }
+    }
+    return '';
+  };
+  const API_URL = getApiUrl();
   const SESSION_KEY = 'omnivet_vet_session';
   const VETS_DB_KEY = 'omnivet_registered_vets_db';
 
@@ -25,6 +46,12 @@ export default function OmniVetDashboard() {
   const hasFittedBoundsRef = useRef(false);
 
   useEffect(() => {
+    const isExplicitlySignedOut = localStorage.getItem('omnivet_signed_out') === 'true';
+    if (isExplicitlySignedOut) {
+      setIsLoggedIn(false);
+      setUser(null);
+      return;
+    }
     const saved = localStorage.getItem(SESSION_KEY);
     if (saved) {
       try {
@@ -32,20 +59,26 @@ export default function OmniVetDashboard() {
         setIsLoggedIn(true);
       } catch (e) {
         localStorage.removeItem(SESSION_KEY);
+        setUser(DEFAULT_OFFICER);
+        setIsLoggedIn(true);
       }
+    } else {
+      localStorage.setItem(SESSION_KEY, JSON.stringify(DEFAULT_OFFICER));
+      setUser(DEFAULT_OFFICER);
+      setIsLoggedIn(true);
     }
   }, []);
 
-  // Fetch live telemetry from FastAPI backend every 4 seconds
+  // Fetch live telemetry from FastAPI backend every 3 seconds
   useEffect(() => {
     if (!isLoggedIn) return;
 
     loadTelemetryData();
-    const interval = setInterval(loadTelemetryData, 4000);
+    const interval = setInterval(loadTelemetryData, 3000);
     return () => clearInterval(interval);
   }, [isLoggedIn]);
 
-  // Initialize Map
+  // Initialize & Update Map when outbreaks or reports change
   useEffect(() => {
     if (isLoggedIn && typeof window !== 'undefined') {
       const timer = setTimeout(() => {
@@ -53,25 +86,30 @@ export default function OmniVetDashboard() {
       }, 300);
       return () => clearTimeout(timer);
     }
-  }, [isLoggedIn, outbreaks]);
+  }, [isLoggedIn, outbreaks, reports]);
 
   const loadTelemetryData = async () => {
+    setIsRefreshing(true);
     try {
       const repRes = await fetch(`${API_URL}/api/reports`);
       if (repRes.ok) {
         const repData = await repRes.json();
-        setReports(repData);
+        const reportsList = Array.isArray(repData) ? repData : (repData.data || []);
+        setReports(reportsList);
       }
 
       const outRes = await fetch(`${API_URL}/api/outbreaks`);
       if (outRes.ok) {
         const outData = await outRes.json();
-        setOutbreaks(outData);
+        const outbreaksList = Array.isArray(outData) ? outData : (outData.data || []);
+        setOutbreaks(outbreaksList);
       }
 
       setApiStatus('Online (Live Sync)');
     } catch (err) {
-      setApiStatus('Offline (Start FastAPI)');
+      setApiStatus('Offline (Cannot Reach Backend)');
+    } finally {
+      setIsRefreshing(false);
     }
   };
 
@@ -98,11 +136,13 @@ export default function OmniVetDashboard() {
       }
     });
 
-    const activeOutbreaks = outbreaks.length > 0 ? outbreaks : reports;
+    const latlngs = [];
 
-    const latlngs = activeOutbreaks.map((o) => {
-      const lat = o.latitude || 16.5062;
-      const lng = o.longitude || 80.6480;
+    // 1. Plot Outbreak Clusters (Orange with 5km perimeter)
+    outbreaks.forEach((o) => {
+      const lat = parseFloat(o.latitude) || 16.5062;
+      const lng = parseFloat(o.longitude) || 80.6480;
+      latlngs.push([lat, lng]);
 
       L.circle([lat, lng], {
         radius: 5000,
@@ -112,27 +152,74 @@ export default function OmniVetDashboard() {
         weight: 1.5,
       }).addTo(map);
 
-      const markerHtml = '<div style="width:20px;height:20px;background:#C2410C;border:3px solid #fff;border-radius:50%;box-shadow:0 0 10px rgba(194,65,12,0.8);"></div>';
+      const markerHtml = '<div style="width:22px;height:22px;background:#C2410C;border:3px solid #fff;border-radius:50%;box-shadow:0 0 10px rgba(194,65,12,0.9);display:flex;align-items:center;justify-content:center;font-size:10px;color:#fff;font-weight:bold;">⚡</div>';
       const customIcon = L.divIcon({
-        className: 'custom-marker',
+        className: 'custom-cluster-marker',
         html: markerHtml,
-        iconSize: [20, 20],
-        iconAnchor: [10, 10],
+        iconSize: [22, 22],
+        iconAnchor: [11, 11],
       });
 
       const marker = L.marker([lat, lng], { icon: customIcon }).addTo(map);
-      const sympStr = Array.isArray(o.symptoms) ? o.symptoms.join(', ') : (o.symptoms || 'None');
-      
       marker.bindPopup(`
-        <div style="color: #78350F; font-size: 12px; font-family: sans-serif;">
-          <b>OUTBREAK ALERT #${o.id || 1}</b><br/>
-          <b>Species:</b> ${o.species || 'Cattle'}<br/>
-          <b>Farmer:</b> ${o.farmer_name || 'Farmer'}<br/>
-          <b>Symptoms:</b> ${sympStr}
+        <div style="color: #78350F; font-size: 12px; font-family: sans-serif; min-width: 170px;">
+          <b style="color:#C2410C;">🚨 OUTBREAK CLUSTER #${o.id || 1}</b><br/>
+          <b>Species:</b> ${o.species || 'All'}<br/>
+          <b>Active Cases:</b> ${o.cases || 1}<br/>
+          <b>Status:</b> ${o.status || 'Active Surveillance'}
         </div>
       `);
+    });
 
-      return [lat, lng];
+    // 2. Plot Farmer Reports from Mobile App
+    reports.forEach((r) => {
+      if (!r.latitude || !r.longitude) return;
+      const lat = parseFloat(r.latitude);
+      const lng = parseFloat(r.longitude);
+      if (isNaN(lat) || isNaN(lng)) return;
+      latlngs.push([lat, lng]);
+
+      const isHigh = r.status === 'flagged_high_risk' || r.mortality_status;
+      const isEscalated = r.status === 'escalated_quarantine_alert';
+
+      const bgColor = isEscalated ? '#B91C1C' : (isHigh ? '#DC2626' : '#D97706');
+      const pulseColor = isEscalated ? 'rgba(185,28,28,0.8)' : (isHigh ? 'rgba(220,38,38,0.8)' : 'rgba(217,119,6,0.5)');
+
+      // Draw quarantine alert circle around high-risk and escalated reports
+      if (isHigh || isEscalated) {
+        L.circle([lat, lng], {
+          radius: 2500,
+          color: bgColor,
+          fillColor: bgColor,
+          fillOpacity: 0.12,
+          weight: 1.5,
+          dashArray: '5, 5'
+        }).addTo(map);
+      }
+
+      const pinHtml = `<div style="width:18px;height:18px;background:${bgColor};border:2.5px solid #fff;border-radius:50%;box-shadow:0 0 8px ${pulseColor};"></div>`;
+      const reportIcon = L.divIcon({
+        className: 'custom-report-marker',
+        html: pinHtml,
+        iconSize: [18, 18],
+        iconAnchor: [9, 9],
+      });
+
+      const sympStr = Array.isArray(r.symptoms) ? r.symptoms.join(', ') : (r.symptoms || 'None');
+      const timeStr = r.timestamp ? new Date(r.timestamp).toLocaleString() : 'Recent';
+
+      const marker = L.marker([lat, lng], { icon: reportIcon }).addTo(map);
+      marker.bindPopup(`
+        <div style="color: #78350F; font-size: 12px; font-family: sans-serif; min-width: 180px;">
+          <b style="color:${bgColor};">📱 FARMER REPORT #${r.id}</b><br/>
+          <b>Farmer:</b> ${r.farmer_name || 'Farmer'}<br/>
+          <b>Phone:</b> ${r.farmer_phone || 'N/A'}<br/>
+          <b>Species:</b> ${r.species || 'Livestock'}<br/>
+          <b>Symptoms:</b> ${sympStr}<br/>
+          <b>Status:</b> ${r.status || 'Pending'}<br/>
+          <b>Submitted:</b> ${timeStr}
+        </div>
+      `);
     });
 
     if (latlngs.length > 0 && !hasFittedBoundsRef.current) {
@@ -181,12 +268,14 @@ export default function OmniVetDashboard() {
     }
 
     localStorage.setItem(SESSION_KEY, JSON.stringify(vetObj));
+    localStorage.removeItem('omnivet_signed_out');
     setUser(vetObj);
     setIsLoggedIn(true);
   };
 
   const handleLogout = () => {
     localStorage.removeItem(SESSION_KEY);
+    localStorage.setItem('omnivet_signed_out', 'true');
     setIsLoggedIn(false);
     setUser(null);
     hasFittedBoundsRef.current = false;
@@ -229,6 +318,15 @@ export default function OmniVetDashboard() {
 
             {isLoggedIn && user && (
               <div className="flex items-center gap-3">
+                <button
+                  onClick={loadTelemetryData}
+                  disabled={isRefreshing}
+                  className="px-3 py-1.5 bg-[#FEF3C7] hover:bg-[#FDE68A] text-[#92400E] border border-[#FDE68A] rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 shadow-sm"
+                  title="Force re-sync with Neon PostgreSQL"
+                >
+                  <span className={isRefreshing ? "animate-spin" : ""}>🔄</span>
+                  {isRefreshing ? 'Syncing...' : 'Refresh Telemetry'}
+                </button>
                 <div className="text-right">
                   <div className="text-xs font-bold text-[#78350F]">{user.name}</div>
                   <div className="text-[10px] text-[#D97706] font-mono font-bold">ID: {user.licId || 'VET-HQ'}</div>
@@ -289,6 +387,22 @@ export default function OmniVetDashboard() {
                   <button type="submit" className="w-full py-3.5 rounded-xl bg-[#D97706] hover:bg-[#B45309] text-white font-black text-xs uppercase tracking-wider shadow-md transition-all">
                     {!otpRequested ? 'Send Verification OTP' : (authMode === 'signin' ? 'Verify & Sign In' : 'Complete Registration')}
                   </button>
+
+                  <div className="pt-2 border-t border-[#FDE68A]">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const demoVet = { name: 'Dr. Suresh Kumar (HQ)', village: 'Central Surveillance Command', licId: 'VET-IND-001', phone: '+91 98765 43210' };
+                        localStorage.setItem(SESSION_KEY, JSON.stringify(demoVet));
+                        localStorage.removeItem('omnivet_signed_out');
+                        setUser(demoVet);
+                        setIsLoggedIn(true);
+                      }}
+                      className="w-full py-2.5 rounded-xl bg-[#FFFBEB] hover:bg-[#FEF3C7] border border-[#FDE68A] text-[#92400E] font-extrabold text-xs shadow-sm transition-all flex items-center justify-center gap-1.5"
+                    >
+                      <span>⚡</span> Instant Sign In as Official Vet
+                    </button>
+                  </div>
                 </form>
               </div>
             </div>
@@ -379,7 +493,7 @@ export default function OmniVetDashboard() {
                               <td className="py-3 px-4 font-semibold text-[#78350F]">{sympText}</td>
                               <td className="py-3 px-4 font-mono text-[11px] text-[#92400E]">📍 {(r.latitude || 0).toFixed(4)}, {(r.longitude || 0).toFixed(4)}</td>
                               <td className="py-3 px-4">{badge}</td>
-                              <td className="py-3 px-4 text-[#92400E] text-[11px] font-semibold">{r.timestamp ? new Date(r.timestamp).toLocaleDateString() : 'N/A'}</td>
+                              <td className="py-3 px-4 text-[#92400E] text-[11px] font-semibold">{r.timestamp ? new Date(r.timestamp).toLocaleString() : 'N/A'}</td>
                               <td className="py-3 px-4 text-right">
                                 {isEscalated ? (
                                   <span className="text-[#D97706] font-black">✓ Escalated</span>

@@ -44,6 +44,107 @@ A production-grade, rural-optimized full-stack surveillance system designed to d
 
 ---
 
+## 🌐 Cloud Deployment: Taking OmniVet Online on Vercel & Neon
+
+OmniVet is configured for modern serverless deployment on **Vercel** with a **Neon PostgreSQL** database.
+
+```text
+┌─────────────────────────────────────────────────────────────┐
+│                 NEON SERVERLESS POSTGRESQL                  │
+│                (PostgreSQL + PostGIS Cloud)                 │
+│              DATABASE_URL on AWS us-east-2                  │
+└──────────────────────────────▲──────────────────────────────┘
+                               │ SQLAlchemy ORM
+                               ▼
+┌─────────────────────────────────────────────────────────────┐
+│               FASTAPI BACKEND ON VERCEL                     │
+│                (Python Serverless Runtime)                  │
+│   - Endpoints: /api/reports, /api/outbreaks, /api/health    │
+│   - vercel.json with @vercel/python                         │
+│   - Environment Variable: DATABASE_URL                      │
+└──────────────────────────────┬──────────────────────────────┘
+                               │
+            ┌──────────────────┴──────────────────┐
+            │ HTTPS API Calls                     │ Telemetry Stream
+            ▼                                     ▼
+┌─────────────────────────┐          ┌─────────────────────────┐
+│   EXPO MOBILE CLIENT    │          │    GIS WEB DASHBOARD    │
+│  Direct Online Reports  │          │    Hosted on Vercel     │
+│   (Expo Go / Android)   │          │  (Next.js 14 Dashboard) │
+│  EXPO_PUBLIC_API_URL    │          │  NEXT_PUBLIC_API_URL    │
+└─────────────────────────┘          └─────────────────────────┘
+```
+
+---
+
+### Part 1: Push latest configurations to GitHub
+
+```bash
+git add .
+git commit -m "Refactor mobile to direct online, connect Neon PostgreSQL, and configure Vercel"
+git push origin main
+```
+
+---
+
+### Part 2: Deploy Backend to Vercel
+
+1. Log in to [vercel.com](https://vercel.com/new).
+2. Click **Add New...** → **Project** and select `jeswingummadi/Omnivet`.
+3. In Project Settings:
+   - **Project Name**: `omnivet-backend`
+   - **Framework Preset**: `Other`
+   - **Root Directory**: Click Edit and select `backend`
+4. In **Environment Variables**, add:
+   - **Key**: `DATABASE_URL`
+   - **Value**: Your Neon connection string (e.g. `postgresql://neondb_owner:***@ep-still-salad-ayl8p78u-pooler.c-5.us-east-2.aws.neon.tech/neondb?sslmode=require`)
+5. Click **Deploy**.
+6. Copy your live backend URL (e.g. `https://omnivet-backend.vercel.app`).
+   - Test it: `https://omnivet-backend.vercel.app/api/health` returns `{"status":"healthy","database":"connected"}`.
+
+*(Note: The backend can also be deployed to Render.com using the included `render.yaml` blueprint).*
+
+---
+
+### Part 3: Deploy GIS Command Dashboard to Vercel
+
+1. In [vercel.com/new](https://vercel.com/new), import `jeswingummadi/Omnivet` as a second project.
+2. In Project Settings:
+   - **Project Name**: `omnivet-dashboard`
+   - **Framework Preset**: `Next.js`
+   - **Root Directory**: Click Edit and select `web`
+3. In **Environment Variables**, add:
+   - **Key**: `NEXT_PUBLIC_API_URL`
+   - **Value**: Your live backend URL from Part 2 (e.g. `https://omnivet-backend.vercel.app`)
+4. Click **Deploy**.
+5. Your live GIS Veterinary Command Center is now online!
+
+---
+
+### Part 4: Run Mobile App (Direct Online Submissions)
+
+The mobile app submits reports directly to your live backend over the network (no offline caching or local queue delays).
+
+1. In your mobile environment:
+   ```bash
+   cd mobile
+   ```
+2. Set your live backend URL in `mobile/.env` or shell:
+   ```env
+   EXPO_PUBLIC_API_URL=https://omnivet-backend.vercel.app
+   ```
+3. Launch Expo:
+   ```bash
+   npm run start
+   ```
+4. Scan the QR code with **Expo Go** (Android/iOS).
+   - If connected to the internet: Submissions directly reach the Neon database and trigger instant triage alerts.
+   - If disconnected: The app immediately alerts: *"Network Error: Please connect to the internet to submit your report."*
+
+*(Optional Web Export: To host the mobile app frontend on Vercel as a PWA, run `npx expo export:web` and deploy the output directory).*
+
+---
+
 ## 🚀 Quickstart: Running All Three Services Locally
 
 ### Prerequisites

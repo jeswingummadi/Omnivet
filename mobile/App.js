@@ -11,6 +11,7 @@ import {
   ActivityIndicator,
   Platform,
   StatusBar,
+  Modal,
 } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import NetInfo from '@react-native-community/netinfo';
@@ -42,7 +43,8 @@ const resolveDefaultApiUrl = () => {
   if (Platform.OS === 'web') {
     return 'http://127.0.0.1:8000';
   }
-  return 'http://10.0.2.2:8000';
+  // Default to laptop Wi-Fi IP for physical phones running Expo Go
+  return 'http://192.168.203.215:8000';
 };
 
 export default function App() {
@@ -55,8 +57,8 @@ export default function App() {
   const [customSymptom, setCustomSymptom] = useState('');
   const [isMortality, setIsMortality] = useState(false);
 
-  const [latitude, setLatitude] = useState('-1.2921');
-  const [longitude, setLongitude] = useState('36.8219');
+  const [latitude, setLatitude] = useState('16.5062');
+  const [longitude, setLongitude] = useState('80.6480');
   const [village, setVillage] = useState('');
   const [district, setDistrict] = useState('');
   const [isLocating, setIsLocating] = useState(false);
@@ -67,6 +69,8 @@ export default function App() {
 
   // Backend API URL (dynamic via EXPO_PUBLIC_API_URL, Web/Emulator auto-detection, or custom setting)
   const [apiUrl, setApiUrl] = useState(resolveDefaultApiUrl());
+  const [isServerModalVisible, setIsServerModalVisible] = useState(false);
+  const [inputApiUrl, setInputApiUrl] = useState('');
 
   useEffect(() => {
     (async () => {
@@ -131,38 +135,86 @@ export default function App() {
   };
 
   const promptChangeApiUrl = () => {
-    if (Platform.OS === 'web') {
-      const entered = window.prompt('Enter OmniVet FastAPI Backend URL (e.g. http://127.0.0.1:8000, http://192.168.206.53:8000, or https://omnivet-backend.vercel.app):', apiUrl);
-      if (entered && entered.trim()) {
-        const clean = entered.trim().replace(/\/$/, '');
-        setApiUrl(clean);
-        AsyncStorage.setItem('@omnivet_api_url', clean).catch(() => {});
-        showMessage(`Backend set to: ${clean}`);
-      }
-    } else {
-      if (Alert.prompt) {
-        Alert.prompt(
-          'Change Backend Server URL',
-          'Enter your backend API URL:',
-          (text) => {
-            if (text && text.trim()) {
-              const clean = text.trim().replace(/\/$/, '');
-              setApiUrl(clean);
-              AsyncStorage.setItem('@omnivet_api_url', clean).catch(() => {});
-              showMessage(`Backend set to: ${clean}`);
-            }
-          },
-          'plain-text',
-          apiUrl
-        );
-      } else {
-        Alert.alert(
-          'Backend Server URL',
-          `Currently connected to:\n${apiUrl}\n\nTo change, set EXPO_PUBLIC_API_URL or run in web browser to edit.`
-        );
-      }
-    }
+    setInputApiUrl(apiUrl);
+    setIsServerModalVisible(true);
   };
+
+  const handleSaveServerUrl = async () => {
+    const trimmed = (inputApiUrl || '').trim().replace(/\/$/, '');
+    if (!trimmed) {
+      Alert.alert('Invalid URL', 'Please enter a valid backend URL (e.g. https://omnivet-api.vercel.app)');
+      return;
+    }
+    setApiUrl(trimmed);
+    setIsServerModalVisible(false);
+    try {
+      await AsyncStorage.setItem('@omnivet_api_url', trimmed);
+    } catch (e) {}
+    showMessage(`Backend server set to: ${trimmed}`);
+  };
+
+  const renderServerModal = () => (
+    <Modal
+      visible={isServerModalVisible}
+      transparent={true}
+      animationType="fade"
+      onRequestClose={() => setIsServerModalVisible(false)}
+    >
+      <View style={styles.modalOverlay}>
+        <View style={styles.modalCard}>
+          <Text style={styles.modalTitle}>🌐 Backend Server URL</Text>
+          <Text style={styles.modalSubtitle}>
+            Connect this app to your FastAPI backend on Vercel or local network.
+          </Text>
+
+          <Text style={styles.modalInputLabel}>Backend API URL:</Text>
+          <TextInput
+            style={styles.modalInput}
+            value={inputApiUrl}
+            onChangeText={setInputApiUrl}
+            placeholder="https://omnivet-api.vercel.app"
+            placeholderTextColor="#A89F91"
+            autoCapitalize="none"
+            autoCorrect={false}
+            keyboardType="url"
+          />
+
+          <Text style={styles.presetsLabel}>Quick Presets (Tap to fill):</Text>
+          <View style={styles.presetButtonsRow}>
+            <TouchableOpacity
+              style={styles.presetBtn}
+              onPress={() => setInputApiUrl('http://192.168.203.215:8000')}
+            >
+              <Text style={styles.presetBtnText}>📶 Wi-Fi (192.168.203.215)</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.presetBtn}
+              onPress={() => setInputApiUrl('http://127.0.0.1:8000')}
+            >
+              <Text style={styles.presetBtnText}>💻 127.0.0.1</Text>
+            </TouchableOpacity>
+          </View>
+
+          <View style={styles.modalButtonsRow}>
+            <TouchableOpacity
+              style={styles.modalCancelBtn}
+              onPress={() => setIsServerModalVisible(false)}
+            >
+              <Text style={styles.modalCancelBtnText}>Cancel</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.modalSaveBtn}
+              onPress={handleSaveServerUrl}
+            >
+              <Text style={styles.modalSaveBtnText}>Save & Connect</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </View>
+    </Modal>
+  );
 
   useEffect(() => {
     if (!currentUser) return;
@@ -277,7 +329,16 @@ export default function App() {
   }
 
   if (!currentUser) {
-    return <AuthScreen onAuthenticate={handleAuthenticate} />;
+    return (
+      <SafeAreaProvider>
+        <AuthScreen
+          onAuthenticate={handleAuthenticate}
+          apiUrl={apiUrl}
+          onChangeServer={promptChangeApiUrl}
+        />
+        {renderServerModal()}
+      </SafeAreaProvider>
+    );
   }
 
   return (
@@ -471,6 +532,7 @@ export default function App() {
             </TouchableOpacity>
           </ScrollView>
         )}
+        {renderServerModal()}
       </SafeAreaView>
     </SafeAreaProvider>
   );
@@ -532,4 +594,19 @@ const styles = StyleSheet.create({
   textInput: { backgroundColor: '#FFFBEB', borderRadius: 10, borderWidth: 1.5, borderColor: '#FDE68A', color: '#292524', paddingHorizontal: 12, paddingVertical: 10, fontSize: 14, fontWeight: '600' },
   submitButton: { backgroundColor: '#D97706', borderRadius: 16, paddingVertical: 16, alignItems: 'center', shadowColor: '#78350F', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.2, shadowRadius: 8, elevation: 4, marginTop: 8 },
   submitButtonText: { color: '#FFFFFF', fontSize: 16, fontWeight: '900', letterSpacing: 1 },
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(0, 0, 0, 0.6)', justifyContent: 'center', alignItems: 'center', padding: 20 },
+  modalCard: { width: '100%', maxWidth: 400, backgroundColor: '#FFFFFF', borderRadius: 20, padding: 20, borderWidth: 1.5, borderColor: '#FDE68A', shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.25, shadowRadius: 10, elevation: 8 },
+  modalTitle: { fontSize: 17, fontWeight: '900', color: '#78350F', marginBottom: 6 },
+  modalSubtitle: { fontSize: 12, color: '#92400E', fontWeight: '600', lineHeight: 17, marginBottom: 16 },
+  modalInputLabel: { fontSize: 12, fontWeight: '800', color: '#78350F', marginBottom: 6 },
+  modalInput: { backgroundColor: '#FFFBEB', borderRadius: 12, borderWidth: 1.5, borderColor: '#FDE68A', color: '#292524', paddingHorizontal: 14, paddingVertical: 12, fontSize: 14, fontWeight: '700', marginBottom: 12 },
+  presetsLabel: { fontSize: 11, fontWeight: '800', color: '#92400E', marginBottom: 6 },
+  presetButtonsRow: { flexDirection: 'row', gap: 8, marginBottom: 18 },
+  presetBtn: { flex: 1, backgroundColor: '#FEF3C7', borderWidth: 1, borderColor: '#FDE68A', borderRadius: 8, paddingVertical: 8, alignItems: 'center' },
+  presetBtnText: { fontSize: 11, fontWeight: '800', color: '#92400E' },
+  modalButtonsRow: { flexDirection: 'row', gap: 10 },
+  modalCancelBtn: { flex: 1, backgroundColor: '#FEF2F2', borderWidth: 1, borderColor: '#FECCA7', borderRadius: 12, paddingVertical: 12, alignItems: 'center' },
+  modalCancelBtnText: { fontSize: 13, fontWeight: '800', color: '#B91C1C' },
+  modalSaveBtn: { flex: 2, backgroundColor: '#D97706', borderRadius: 12, paddingVertical: 12, alignItems: 'center', shadowColor: '#78350F', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.2, elevation: 3 },
+  modalSaveBtnText: { fontSize: 13, fontWeight: '900', color: '#FFFFFF', letterSpacing: 0.5 },
 });

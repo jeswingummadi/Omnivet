@@ -23,6 +23,8 @@ export default function OmniVetDashboard() {
   const [reports, setReports] = useState([]);
   const [outbreaks, setOutbreaks] = useState([]);
   const [apiStatus, setApiStatus] = useState('Connecting...');
+  const [incomingAlert, setIncomingAlert] = useState(null);
+  const lastSeenReportIdRef = useRef(null);
 
   const [isRefreshing, setIsRefreshing] = useState(false);
 
@@ -88,22 +90,58 @@ export default function OmniVetDashboard() {
     }
   }, [isLoggedIn, outbreaks, reports]);
 
+  const fetchEndpointData = async (endpointPath) => {
+    // 1. Try Next.js server proxy first (works seamlessly on localhost and Vercel)
+    try {
+      const res = await fetch(endpointPath);
+      if (res.ok) return await res.json();
+    } catch (e) {}
+
+    // 2. Try direct API_URL
+    if (API_URL) {
+      try {
+        const res = await fetch(`${API_URL}${endpointPath}`);
+        if (res.ok) return await res.json();
+      } catch (e) {}
+    }
+
+    // 3. Try direct local backend
+    try {
+      const res = await fetch(`http://127.0.0.1:8000${endpointPath}`);
+      if (res.ok) return await res.json();
+    } catch (e) {}
+
+    throw new Error('All telemetry endpoints unreachable');
+  };
+
   const loadTelemetryData = async () => {
     setIsRefreshing(true);
     try {
-      const repRes = await fetch(`${API_URL}/api/reports`);
-      if (repRes.ok) {
-        const repData = await repRes.json();
-        const reportsList = Array.isArray(repData) ? repData : (repData.data || []);
-        setReports(reportsList);
+      const repData = await fetchEndpointData('/api/reports');
+      const reportsList = Array.isArray(repData) ? repData : (repData.data || []);
+      setReports(reportsList);
+
+      // Auto-detect incoming alerts from mobile
+      if (reportsList.length > 0) {
+        const topReport = reportsList[0];
+        if (lastSeenReportIdRef.current === null) {
+          // On first load, show the latest alert if high risk
+          if (topReport.status === 'flagged_high_risk' || topReport.mortality_status) {
+            setIncomingAlert(topReport);
+          }
+        } else if (topReport.id > lastSeenReportIdRef.current) {
+          // New report arrived in real-time!
+          setIncomingAlert(topReport);
+          if (mapInstanceRef.current && topReport.latitude && topReport.longitude) {
+            mapInstanceRef.current.setView([parseFloat(topReport.latitude), parseFloat(topReport.longitude)], 13);
+          }
+        }
+        lastSeenReportIdRef.current = topReport.id;
       }
 
-      const outRes = await fetch(`${API_URL}/api/outbreaks`);
-      if (outRes.ok) {
-        const outData = await outRes.json();
-        const outbreaksList = Array.isArray(outData) ? outData : (outData.data || []);
-        setOutbreaks(outbreaksList);
-      }
+      const outData = await fetchEndpointData('/api/outbreaks');
+      const outbreaksList = Array.isArray(outData) ? outData : (outData.data || []);
+      setOutbreaks(outbreaksList);
 
       setApiStatus('Online (Live Sync)');
     } catch (err) {
@@ -408,6 +446,43 @@ export default function OmniVetDashboard() {
             </div>
           ) : (
             <div className="space-y-6">
+              {incomingAlert && (
+                <div className="bg-gradient-to-r from-[#DC2626] via-[#D97706] to-[#DC2626] text-white p-4 rounded-2xl shadow-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-2 border-red-300">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-xl bg-white/20 flex items-center justify-center text-xl font-bold shadow-inner">
+                      🚨
+                    </div>
+                    <div>
+                      <div className="text-[11px] font-black uppercase tracking-wider text-amber-200 flex items-center gap-1.5">
+                        <span className="w-2 h-2 rounded-full bg-white animate-ping"></span>
+                        LIVE EMERGENCY ALERT #{incomingAlert.id} RECEIVED FROM MOBILE
+                      </div>
+                      <div className="text-sm font-black">
+                        Farmer <span className="underline decoration-amber-300">{incomingAlert.farmer_name || 'Farmer'}</span> reported <span className="text-amber-200">{incomingAlert.species}</span> with symptoms: <span className="text-white font-bold">{Array.isArray(incomingAlert.symptoms) ? incomingAlert.symptoms.join(', ') : incomingAlert.symptoms}</span>
+                      </div>
+                      <div className="text-[11px] text-amber-100 font-semibold">
+                        GPS: {parseFloat(incomingAlert.latitude || 0).toFixed(4)}, {parseFloat(incomingAlert.longitude || 0).toFixed(4)} • Phone: {incomingAlert.farmer_phone || 'N/A'} • Status: {incomingAlert.status}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => focusOnFarmerLocation(incomingAlert.latitude, incomingAlert.longitude)}
+                      className="px-4 py-2 bg-white text-red-700 hover:bg-amber-100 font-black text-xs rounded-xl shadow-md transition-all flex items-center gap-1.5"
+                    >
+                      <span>📍</span> Zoom to Location
+                    </button>
+                    <button
+                      onClick={() => setIncomingAlert(null)}
+                      className="px-3 py-2 bg-black/20 hover:bg-black/30 text-white font-bold text-xs rounded-xl transition-all"
+                      title="Dismiss Alert"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                </div>
+              )}
+
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-[#FFFFFF] border-[1.5px] border-[#FDE68A] p-3 rounded-2xl shadow-sm">
                 <div className="flex items-center gap-2">
                   <span className="w-2.5 h-2.5 rounded-full bg-[#D97706] animate-ping"></span>

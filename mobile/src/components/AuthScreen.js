@@ -11,7 +11,7 @@ import {
   StatusBar,
 } from 'react-native';
 
-export function AuthScreen({ onAuthenticate }) {
+export function AuthScreen({ onAuthenticate, apiUrl, onChangeServer }) {
   // Role: 'farmer' or 'vet'
   const [role, setRole] = useState('farmer');
   
@@ -95,6 +95,19 @@ export function AuthScreen({ onAuthenticate }) {
               : 'Monitor regional outbreaks, inspect telemetry, and coordinate responses.'}
           </Text>
         </View>
+ 
+        {/* Server Connection Badge */}
+        {apiUrl && onChangeServer && (
+          <TouchableOpacity
+            style={styles.serverBadge}
+            onPress={onChangeServer}
+            activeOpacity={0.7}
+          >
+            <Text style={styles.serverBadgeText}>
+              🌐 Server: {apiUrl.replace('https://', '').replace('http://', '')} (Tap to change)
+            </Text>
+          </TouchableOpacity>
+        )}
 
         {/* Role Switcher Tabs */}
         <View style={styles.roleTabRow}>
@@ -269,6 +282,8 @@ const styles = StyleSheet.create({
   appBadge: { fontSize: 11, fontWeight: '900', color: '#D97706', letterSpacing: 1.5, marginBottom: 6 },
   title: { fontSize: 22, fontWeight: '900', color: '#78350F', textAlign: 'center', marginBottom: 6 },
   subtitle: { fontSize: 13, color: '#92400E', textAlign: 'center', paddingHorizontal: 16, lineHeight: 18, fontWeight: '600' },
+  serverBadge: { alignSelf: 'center', backgroundColor: '#FEF3C7', borderColor: '#FDE68A', borderWidth: 1.5, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 6, marginBottom: 16 },
+  serverBadgeText: { fontSize: 11, fontWeight: '800', color: '#92400E' },
   roleTabRow: { flexDirection: 'row', backgroundColor: '#FEF3C7', borderRadius: 14, padding: 4, marginBottom: 16, borderWidth: 1, borderColor: '#FDE68A' },
   roleBtn: { flex: 1, paddingVertical: 12, alignItems: 'center', borderRadius: 10 },
   roleBtnActiveFarmer: { backgroundColor: '#D97706', shadowColor: '#78350F', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.2, elevation: 3 },

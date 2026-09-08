@@ -38,7 +38,7 @@ export default function OmniVetDashboard() {
         return 'http://127.0.0.1:8000';
       }
     }
-    return '';
+    return 'https://omnivet-api.vercel.app';
   };
   const API_URL = getApiUrl();
   const SESSION_KEY = 'omnivet_vet_session';
@@ -91,23 +91,29 @@ export default function OmniVetDashboard() {
   }, [isLoggedIn, outbreaks, reports]);
 
   const fetchEndpointData = async (endpointPath) => {
-    // 1. Try Next.js server proxy first (works seamlessly on localhost and Vercel)
+    const targetUrl = (API_URL || 'https://omnivet-api.vercel.app').replace(/\/$/, '');
+
+    // 1. Try direct API URL (fastest & bypasses any serverless proxy issues)
+    try {
+      const res = await fetch(`${targetUrl}${endpointPath}`);
+      if (res.ok) return await res.json();
+    } catch (e) {}
+
+    // 2. Try relative Next.js proxy
     try {
       const res = await fetch(endpointPath);
       if (res.ok) return await res.json();
     } catch (e) {}
 
-    // 2. Try direct API_URL
-    if (API_URL) {
-      try {
-        const res = await fetch(`${API_URL}${endpointPath}`);
-        if (res.ok) return await res.json();
-      } catch (e) {}
-    }
-
     // 3. Try direct local backend
     try {
       const res = await fetch(`http://127.0.0.1:8000${endpointPath}`);
+      if (res.ok) return await res.json();
+    } catch (e) {}
+
+    // 4. Try live production Vercel backend
+    try {
+      const res = await fetch(`https://omnivet-api.vercel.app${endpointPath}`);
       if (res.ok) return await res.json();
     } catch (e) {}
 
